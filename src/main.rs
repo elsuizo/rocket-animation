@@ -1,60 +1,87 @@
 use bevy::prelude::*;
 
+use std::f32::consts::*;
+
+use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap};
+
+// Define a "marker" component to mark the custom mesh. Marker components are often used in Bevy for
+// filtering entities in queries with `With`, they're usually not queried directly since they don't
+// contain information within them.
 #[derive(Component)]
-struct Ground;
+struct Missile;
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let missile_model = asset_server
+        .load(GltfAssetLabel::Scene(0).from_asset("DualSpin/CP30M_STD_2024_DS V_5_Comp.glb"));
+
+    commands.spawn((
+        SceneRoot(missile_model),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Missile,
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(1.2, 1.7, 1.5).looking_at(Vec3::new(0.0, 0.3, 0.0), Vec3::Y),
+        EnvironmentMapLight {
+            diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
+            specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
+            intensity: 350.0,
+            ..default()
+        },
+    ));
+}
 
 fn main() {
     App::new()
+        .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
         .add_systems(
-            Startup,
-            (spawn_floor, spawn_camera, spawn_light, spawn_robot),
+            Update,
+            (move_camera, animate_light_direction, input_handler),
         )
-        .add_systems(Update, (draw_cursor, robot_move))
         .run();
 }
 
-fn draw_cursor(
-    camera_query: Single<(&Camera, &GlobalTransform)>,
-    ground: Single<&GlobalTransform, With<Ground>>,
-    window: Single<&Window>,
-    mut gizmos: Gizmos,
+fn input_handler(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mesh_query: Query<&Mesh3d, With<Missile>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut query: Query<&mut Transform, With<Missile>>,
+    time: Res<Time>,
 ) {
-    let (camera, camera_transform) = *camera_query;
-
-    if let Some(cursor_position) = window.cursor_position()
-        // Calculate a ray pointing from the camera into the world based on the cursor's position.
-        && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position)
-        // Calculate if and at what distance the ray is hitting the ground plane.
-        && let Some(distance) =
-            ray.intersect_plane(ground.translation(), InfinitePlane3d::new(ground.up()))
-    {
-        let point = ray.get_point(distance);
-
-        // Draw a circle just above the ground plane at that position.
-        gizmos.circle(
-            Isometry3d::new(
-                point + ground.up() * 0.01,
-                Quat::from_rotation_arc(Vec3::Z, ground.up().as_vec3()),
-            ),
-            0.2,
-            Color::BLACK,
-        );
+    // if keyboard_input.just_pressed(KeyCode::Space) {
+    //     let mesh_handle = mesh_query.single().expect("Query not successful");
+    //     let mesh = meshes.get_mut(mesh_handle).unwrap();
+    //     toggle_texture(mesh);
+    // }
+    if keyboard_input.pressed(KeyCode::KeyX) {
+        for mut transform in &mut query {
+            transform.rotate_x(time.delta_secs() / 1.2);
+        }
+    }
+    if keyboard_input.pressed(KeyCode::KeyY) {
+        for mut transform in &mut query {
+            transform.rotate_y(time.delta_secs() / 1.2);
+        }
+    }
+    if keyboard_input.pressed(KeyCode::KeyZ) {
+        for mut transform in &mut query {
+            transform.rotate_z(time.delta_secs() / 1.2);
+        }
+    }
+    if keyboard_input.pressed(KeyCode::KeyR) {
+        for mut transform in &mut query {
+            transform.look_to(Vec3::NEG_Z, Vec3::Y);
+        }
     }
 }
 
-//-------------------------------------------------------------------------
-//                        robot component
-//-------------------------------------------------------------------------
-#[derive(Component)]
-struct Robot;
-
-// TODO(elsuizo: 2025-07-21): cuando hacemos una
-fn robot_move(
+fn move_camera(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut player_query: Query<&mut Transform, With<Robot>>,
-    camera_query: Query<&Transform, (With<Camera3d>, Without<Robot>)>,
+    mut player_query: Query<&mut Transform, With<Missile>>,
+    camera_query: Query<&Transform, (With<Camera3d>, Without<Missile>)>,
 ) {
     for mut robot_transform in player_query.iter_mut() {
         // tratamos de obtener la camara
@@ -86,41 +113,85 @@ fn robot_move(
         robot_transform.translation += movement;
     }
 }
+// fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+//     commands.spawn((
+//         Camera3d::default(),
+//         Transform::from_xyz(1.2, 1.7, 2.0).looking_at(Vec3::new(0.0, 0.3, 0.0), Vec3::Y),
+//         EnvironmentMapLight {
+//             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
+//             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
+//             intensity: 250.0,
+//             ..default()
+//         },
+//     ));
+//
+//     commands.spawn((
+//         DirectionalLight {
+//             shadows_enabled: true,
+//             ..default()
+//         },
+//         // This is a relatively small scene, so use tighter shadow
+//         // cascade bounds than the default for better quality.
+//         // We also adjusted the shadow map to be larger since we're
+//         // only using a single cascade.
+//         CascadeShadowConfigBuilder {
+//             num_cascades: 1,
+//             maximum_distance: 1.6,
+//             ..default()
+//         }
+//         .build(),
+//     ));
+//     commands.spawn(SceneRoot(asset_server.load(
+//         GltfAssetLabel::Scene(0).from_asset("DualSpin/CP30M_STD_2024_DS V_5_Comp.glb"),
+//     )));
+// }
 
-fn spawn_robot(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+fn animate_light_direction(
+    time: Res<Time>,
+    mut query: Query<&mut Transform, With<DirectionalLight>>,
 ) {
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(Color::BLACK)),
-        Robot,
-    ));
+    for mut transform in &mut query {
+        transform.rotation = Quat::from_euler(
+            EulerRot::ZYX,
+            0.0,
+            time.elapsed_secs() * PI / 5.0,
+            -FRAC_PI_4,
+        );
+    }
 }
 
-fn spawn_camera(mut commands: Commands) {
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(15.0, 5.0, 15.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-}
-
-fn spawn_light(mut commands: Commands) {
-    commands.spawn((
-        DirectionalLight::default(),
-        Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-}
-
-fn spawn_floor(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(20., 20.))),
-        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-        Ground,
-    ));
-}
+// // System to receive input from the user,
+// // check out examples/input/ for more examples about user input.
+// fn input_handler(
+//     keyboard_input: Res<ButtonInput<KeyCode>>,
+//     mesh_query: Query<&Mesh3d, With<CustomUV>>,
+//     mut meshes: ResMut<Assets<Mesh>>,
+//     mut query: Query<&mut Transform, With<CustomUV>>,
+//     time: Res<Time>,
+// ) {
+//     if keyboard_input.just_pressed(KeyCode::Space) {
+//         let mesh_handle = mesh_query.single().expect("Query not successful");
+//         let mesh = meshes.get_mut(mesh_handle).unwrap();
+//         println!("space!!!");
+//     }
+//     if keyboard_input.pressed(KeyCode::KeyX) {
+//         for mut transform in &mut query {
+//             transform.rotate_x(time.delta_secs() / 1.2);
+//         }
+//     }
+//     if keyboard_input.pressed(KeyCode::KeyY) {
+//         for mut transform in &mut query {
+//             transform.rotate_y(time.delta_secs() / 1.2);
+//         }
+//     }
+//     if keyboard_input.pressed(KeyCode::KeyZ) {
+//         for mut transform in &mut query {
+//             transform.rotate_z(time.delta_secs() / 1.2);
+//         }
+//     }
+//     if keyboard_input.pressed(KeyCode::KeyR) {
+//         for mut transform in &mut query {
+//             transform.look_to(Vec3::NEG_Z, Vec3::Y);
+//         }
+//     }
+// }
