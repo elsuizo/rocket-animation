@@ -1,8 +1,11 @@
-use bevy::prelude::*;
-
-use std::f32::consts::*;
-
 use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap};
+use bevy::{prelude::*, render::camera::Viewport, window::PrimaryWindow};
+use bevy_egui::{
+    EguiContext, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
+    PrimaryEguiContext, egui,
+};
+use bevy_render::view::RenderLayers;
+use std::f32::consts::*;
 
 // Define a "marker" component to mark the custom mesh. Marker components are often used in Bevy for
 // filtering entities in queries with `With`, they're usually not queried directly since they don't
@@ -10,9 +13,25 @@ use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap};
 #[derive(Component)]
 struct Missile;
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut egui_global_settings: ResMut<EguiGlobalSettings>,
+) {
+    egui_global_settings.auto_create_primary_context = false;
     let missile_model = asset_server
         .load(GltfAssetLabel::Scene(0).from_asset("DualSpin/CP30M_STD_2024_DS V_5_Comp.glb"));
+    commands.spawn((
+        // The `PrimaryEguiContext` component requires everything needed to render a primary context.
+        PrimaryEguiContext,
+        Camera2d,
+        // Setting RenderLayers to none makes sure we won't render anything apart from the UI.
+        RenderLayers::none(),
+        Camera {
+            order: 1,
+            ..default()
+        },
+    ));
 
     commands.spawn((
         SceneRoot(missile_model),
@@ -34,12 +53,15 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 fn main() {
     App::new()
         .insert_resource(DirectionalLightShadowMap { size: 4096 })
+        .init_resource::<UiState>()
         .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (move_camera, animate_light_direction, input_handler),
         )
+        .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
 }
 
@@ -57,7 +79,7 @@ fn input_handler(
     // }
     if keyboard_input.pressed(KeyCode::KeyX) {
         for mut transform in &mut query {
-            transform.rotate_x(time.delta_secs() / 1.2);
+            transform.rotate_x(time.delta_secs() / 0.7);
         }
     }
     if keyboard_input.pressed(KeyCode::KeyY) {
@@ -113,38 +135,6 @@ fn move_camera(
         robot_transform.translation += movement;
     }
 }
-// fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-//     commands.spawn((
-//         Camera3d::default(),
-//         Transform::from_xyz(1.2, 1.7, 2.0).looking_at(Vec3::new(0.0, 0.3, 0.0), Vec3::Y),
-//         EnvironmentMapLight {
-//             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
-//             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
-//             intensity: 250.0,
-//             ..default()
-//         },
-//     ));
-//
-//     commands.spawn((
-//         DirectionalLight {
-//             shadows_enabled: true,
-//             ..default()
-//         },
-//         // This is a relatively small scene, so use tighter shadow
-//         // cascade bounds than the default for better quality.
-//         // We also adjusted the shadow map to be larger since we're
-//         // only using a single cascade.
-//         CascadeShadowConfigBuilder {
-//             num_cascades: 1,
-//             maximum_distance: 1.6,
-//             ..default()
-//         }
-//         .build(),
-//     ));
-//     commands.spawn(SceneRoot(asset_server.load(
-//         GltfAssetLabel::Scene(0).from_asset("DualSpin/CP30M_STD_2024_DS V_5_Comp.glb"),
-//     )));
-// }
 
 fn animate_light_direction(
     time: Res<Time>,
@@ -160,38 +150,31 @@ fn animate_light_direction(
     }
 }
 
-// // System to receive input from the user,
-// // check out examples/input/ for more examples about user input.
-// fn input_handler(
-//     keyboard_input: Res<ButtonInput<KeyCode>>,
-//     mesh_query: Query<&Mesh3d, With<CustomUV>>,
-//     mut meshes: ResMut<Assets<Mesh>>,
-//     mut query: Query<&mut Transform, With<CustomUV>>,
-//     time: Res<Time>,
-// ) {
-//     if keyboard_input.just_pressed(KeyCode::Space) {
-//         let mesh_handle = mesh_query.single().expect("Query not successful");
-//         let mesh = meshes.get_mut(mesh_handle).unwrap();
-//         println!("space!!!");
-//     }
-//     if keyboard_input.pressed(KeyCode::KeyX) {
-//         for mut transform in &mut query {
-//             transform.rotate_x(time.delta_secs() / 1.2);
-//         }
-//     }
-//     if keyboard_input.pressed(KeyCode::KeyY) {
-//         for mut transform in &mut query {
-//             transform.rotate_y(time.delta_secs() / 1.2);
-//         }
-//     }
-//     if keyboard_input.pressed(KeyCode::KeyZ) {
-//         for mut transform in &mut query {
-//             transform.rotate_z(time.delta_secs() / 1.2);
-//         }
-//     }
-//     if keyboard_input.pressed(KeyCode::KeyR) {
-//         for mut transform in &mut query {
-//             transform.look_to(Vec3::NEG_Z, Vec3::Y);
-//         }
-//     }
-// }
+#[derive(Default, Resource)]
+struct UiState {
+    label: String,
+    value: f32,
+    inverted: bool,
+    egui_texture_handle: Option<egui::TextureHandle>,
+    is_window_open: bool,
+}
+
+fn ui_system(mut ui_state: ResMut<UiState>, mut contexts: EguiContexts) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    let mut _left = egui::SidePanel::left("left_panel")
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label("Valores");
+            ui.vertical(|ui| {
+                ui.label("Yaw: ");
+                ui.label("Picth: ");
+                ui.label("Roll: ");
+            });
+            ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
+        })
+        .response
+        .rect
+        .with_max_y(100.0);
+
+    Ok(())
+}
